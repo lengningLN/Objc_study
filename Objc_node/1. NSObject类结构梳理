@@ -1,0 +1,144 @@
+## NSObject 的基本数据结构
+1. Class类型的宏定义
+typedef struct objc_class *Class;
+
+2. 实例对象的宏定义
+struct objc_object {
+    Class _Nonnull isa  OBJC_ISA_AVAILABILITY;
+};
+
+3. id类型的宏定义
+typedef struct objc_object *id;
+
+总结：OC中的Class 是结构体objc_class类型，instance class 是结构体objc_object类型的。实例对象的isa指针指向他的类对象。
+      id是指向实例对象的指针。
+
+
+### 新版本的定义
+1. struct objc_object {
+    private:
+      isa_t isa;
+};
+
+2. struct objc_class : objc_object {
+    // Class ISA;
+    Class superclass;
+    cache_t cache;             // formerly cache pointer and vtable
+    class_data_bits_t bits;    // class_rw_t * plus custom rr/alloc flags
+
+    class_rw_t *data() const {
+        return bits.data();
+    }
+
+    Class getMeta() {
+        if (isMetaClass()) return (Class)this;
+        else return this->ISA();
+    }
+    bool isRootClass() {
+        return superclass == nil;
+    }
+    bool isRootMetaclass() {
+        return ISA() == (Class)this;
+    }
+
+  }
+
+  3. struct class_data_bits_t {
+    friend objc_class;
+
+    // Values are the FAST_ flags above.
+    uintptr_t bits;
+
+    class_rw_t* data() const {
+        return (class_rw_t *)(bits & FAST_DATA_MASK);
+    }
+
+  }
+
+4. struct class_rw_t {
+  // methods 列表
+  const method_array_t methods() const {
+    auto v = get_ro_or_rwe();
+    if (v.is<class_rw_ext_t *>()) {
+        return v.get<class_rw_ext_t *>()->methods;
+    } else {
+        return method_array_t{v.get<const class_ro_t *>()->baseMethods()};
+    }
+    }
+  // property 列表
+  const property_array_t properties() const {
+    auto v = get_ro_or_rwe();
+    if (v.is<class_rw_ext_t *>()) {
+        return v.get<class_rw_ext_t *>()->properties;
+    } else {
+        return property_array_t{v.get<const class_ro_t *>()->baseProperties};
+    }
+    }
+  // protocol 列表
+  const protocol_array_t protocols() const {
+    auto v = get_ro_or_rwe();
+    if (v.is<class_rw_ext_t *>()) {
+        return v.get<class_rw_ext_t *>()->protocols;
+    } else {
+        return protocol_array_t{v.get<const class_ro_t *>()->baseProtocols};
+    }
+  }
+}
+
+methods()方法体重有两种情况，一种是class_rw_ext_t, 一种是class_ro_t
+
+4.1 struct class_rw_ext_t {
+    const class_ro_t *ro;     // 存放ro的内容
+    method_array_t methods;   // 存放ro中的方法 + 动态添加的方法
+    property_array_t properties;
+    protocol_array_t protocols;
+    char *demangledName;
+    uint32_t version;         // 元类7， 非袁磊0
+};
+
+4.2  struct class_ro_t {
+    uint32_t flags;
+    uint32_t instanceStart;
+    uint32_t instanceSize;
+#ifdef __LP64__
+    uint32_t reserved;
+#endif
+
+    const uint8_t * ivarLayout;
+
+    const char * name;
+    method_list_t * baseMethodList;     // 方法列表
+    protocol_list_t * baseProtocols;    // 协议列表
+    const ivar_list_t * ivars;          // 变量
+
+    const uint8_t * weakIvarLayout;
+    property_list_t *baseProperties;
+
+    // This field exists only when RO_HAS_SWIFT_INITIALIZER is set.
+    _objc_swiftMetadataInitializer __ptrauth_objc_method_list_imp _swiftMetadataInitializer_NEVER_USE[0];
+
+    _objc_swiftMetadataInitializer swiftMetadataInitializer() const {
+        if (flags & RO_HAS_SWIFT_INITIALIZER) {
+            return _swiftMetadataInitializer_NEVER_USE[0];
+        } else {
+            return nil;
+        }
+    }
+
+    method_list_t *baseMethods() const {
+        return baseMethodList;
+    }
+
+    class_ro_t *duplicate() const {
+        if (flags & RO_HAS_SWIFT_INITIALIZER) {
+            size_t size = sizeof(*this) + sizeof(_swiftMetadataInitializer_NEVER_USE[0]);
+            class_ro_t *ro = (class_ro_t *)memdup(this, size);
+            ro->_swiftMetadataInitializer_NEVER_USE[0] = this->_swiftMetadataInitializer_NEVER_USE[0];
+            return ro;
+        } else {
+            size_t size = sizeof(*this);
+            class_ro_t *ro = (class_ro_t *)memdup(this, size);
+            return ro;
+        }
+    }
+};
